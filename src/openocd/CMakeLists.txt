@@ -14,12 +14,20 @@ set(stlink_source_files
 
 # add libusb library
 
+IF (WIN32)
+    # On Windows, prefer static library
+    find_path(LIBUSB_INCLUDE_DIR NAMES libusb.h PATH_SUFFIXES "libusb-1.0")
+    cmake_print_variables(LIBUSB_INCLUDE_DIR)
 
-find_path(LIBUSB_INCLUDE_DIR NAMES libusb.h PATH_SUFFIXES "libusb-1.0")
-cmake_print_variables(LIBUSB_INCLUDE_DIR)
+    find_library(LIBUSB_LIBRARY NAMES libusb-1.0.a libusb-1.0 usb-1.0)
+    cmake_print_variables(LIBUSB_LIBRARY)
+ELSE()
+    find_path(LIBUSB_INCLUDE_DIR NAMES libusb.h PATH_SUFFIXES "libusb-1.0")
+    cmake_print_variables(LIBUSB_INCLUDE_DIR)
 
-find_library(LIBUSB_LIBRARY NAMES libusb-1.0 usb-1.0)
-cmake_print_variables(LIBUSB_LIBRARY)
+    find_library(LIBUSB_LIBRARY NAMES libusb-1.0 usb-1.0)
+    cmake_print_variables(LIBUSB_LIBRARY)
+ENDIF()
 
 #find_package(libusb-1.0 REQUIRED)
 
