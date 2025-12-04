@@ -1,16 +1,12 @@
-include(CMakePrintHelpers)
-include(FetchContent)
-cmake_print_variables(CMAKE_VERSION)
+# Set C standard
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# pthread
-set(THREADS_PREFER_PTHREAD_FLAG)
-include(FindThreads)
-cmake_print_variables(CMAKE_USE_PTHREADS_INIT)
-
-# sources
+# C sources
 set(strtt_source_files
-    strtt.cpp
-    strttapp.cpp)
+    strtt.c
+    inputparser.c
+    strttapp.c)
 
 add_executable(strtt ${strtt_source_files})
 

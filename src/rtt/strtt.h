@@ -15,15 +15,18 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _PH_STRTT_H
-#define _PH_STRTT_H
+#ifndef _PH_STRTT_C_H
+#define _PH_STRTT_C_H
 
-#include <vector>
-#include <string>
-#include <functional>
+#include <stdint.h>
+#include <stdbool.h>
 
 #include "stlink.h"
 #include "stlink_errors.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define RAM_START (0x20000000)
 #define SANE_SIZE_MAX (256 * 1024) // 256KB
@@ -33,105 +36,103 @@
 #define SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL (2) // Block: Wait until there is space in the buffer.
 
 #define STLINK_TCP_PORT (7184)
-
 #define STLINK_SPEED (24 * 1000)
 
-//
+// Dynamic buffer structure
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    size_t capacity;
+} buffer_t;
+
 // Description for a circular buffer (also called "ring buffer")
 // which is used as up-buffer (T->H)
-//
-typedef struct __attribute__((__packed__))
-{
+typedef struct __attribute__((__packed__)) {
     uint32_t sName;        // Optional name. Standard names so far are: "Terminal", "SysView", "J-Scope_t4i4"
     uint32_t pBuffer;      // Pointer to start of buffer
     uint32_t SizeOfBuffer; // Buffer size in bytes. Note that one byte is lost, as this implementation does not fill up the buffer in order to avoid the problem of being unable to distinguish between full and empty.
     uint32_t WrOff;        // Position of next item to be written by either target.
     uint32_t RdOff;        // Position of next item to be read by host. Must be volatile since it may be modified by host.
     uint32_t Flags;        // Contains configuration flags
-} SEGGER_RTT_BUFFER;
+} segger_rtt_buffer_t;
 
-//
 // RTT control block which describes the number of buffers available
 // as well as the configuration for each buffer
-//
-//
-typedef struct __attribute__((__packed__))
-{
-    char acID[16];                // Initialized to "SEGGER RTT"
-    uint32_t MaxNumUpBuffers;     // Initialized to SEGGER_RTT_MAX_NUM_UP_BUFFERS (type. 2)
-    uint32_t MaxNumDownBuffers;   // Initialized to SEGGER_RTT_MAX_NUM_DOWN_BUFFERS (type. 2)
-    SEGGER_RTT_BUFFER buffDesc[]; // Up/Down buffers, transferring information up/down from target via debug probe to host
-} SEGGER_RTT_CB;
+typedef struct __attribute__((__packed__)) {
+    char acID[16];                    // Initialized to "SEGGER RTT"
+    uint32_t MaxNumUpBuffers;         // Initialized to SEGGER_RTT_MAX_NUM_UP_BUFFERS (type. 2)
+    uint32_t MaxNumDownBuffers;       // Initialized to SEGGER_RTT_MAX_NUM_DOWN_BUFFERS (type. 2)
+    segger_rtt_buffer_t buffDesc[];   // Up/Down buffers, transferring information up/down from target via debug probe to host
+} segger_rtt_cb_t;
 
-//
-//
-//
-typedef struct
-{
-    SEGGER_RTT_CB *pRttDescription;
+typedef struct {
+    segger_rtt_cb_t *pRttDescription;
     uint32_t offset;
-} SEGGER_RTT_INFO;
+} segger_rtt_info_t;
 
-//
-//
-//
-typedef std::function<void(const int, const std::vector<uint8_t> *)> CallbackFunction;
+// Callback function signature
+typedef void (*channel_callback_fn)(int channel_index, const buffer_t *buffer, void *user_data);
 
-class StRtt
-{
-private:
-    // parameters
-    struct hl_interface_param_s _param = {0};
-    // stlink handle
-    void *_handle = nullptr;
+// Main RTT structure
+typedef struct {
+    struct hl_interface_param_s param;
+    void *handle;
 
-    // memory used to find RTT
-    // we may need it later to find details about buffers, that's why we keep it all the time
-    std::vector<uint8_t> _memory;
+    // Memory used to find RTT
+    buffer_t memory;
 
-    // all information about rtt layout
-    // warning: it is valid after findRtt()
-    SEGGER_RTT_INFO _rtt_info = {0};
+    // All information about RTT layout
+    segger_rtt_info_t rtt_info;
 
-    // chanels names
-    std::vector<std::string> _rtt_info_names;
+    // Channel names
+    char **rtt_info_names;
+    size_t rtt_info_names_count;
 
-    // timestamp
-    double _duration;
+    // Timestamp
+    double duration;
 
-    // callback signature
-    CallbackFunction _callback;
+    // Callback
+    channel_callback_fn callback;
+    void *callback_user_data;
 
-    // write shadow memory
-    std::vector<uint8_t> _wrMemory;
+    // Write shadow memory
+    buffer_t wr_memory;
 
-    // private functions
-    void init();
-    int readRttEx(uint32_t index);
-    unsigned _GetAvailWriteSpace(SEGGER_RTT_BUFFER *pRing);
+    // RAM start address
+    uint32_t ram_start;
 
-    // special ramStart
-    uint32_t ramStart;
-    // ap number
-    uint8_t apNum;
-public:
-    StRtt(uint32_t start = RAM_START, uint8_t apNum = 0);
-    ~StRtt();
+    // AP number
+    uint8_t ap_num;
+} strtt_t;
 
-    int open(bool use_tcp, uint16_t port_tcp = STLINK_TCP_PORT);
-    int close();
+// Buffer management functions
+buffer_t* buffer_create(size_t initial_capacity);
+void buffer_free(buffer_t *buffer);
+int buffer_resize(buffer_t *buffer, size_t new_size);
+int buffer_push_back(buffer_t *buffer, uint8_t value);
+void buffer_clear(buffer_t *buffer);
 
-    int findRtt(uint32_t ramKbytes);
-    int getRttDesc();
-    int getRttBuffSize(uint32_t buffIndex, uint32_t *sizeRead, uint32_t *sizeWrite);
+// StRtt functions
+strtt_t* strtt_create(uint32_t ram_start, uint8_t ap_num);
+void strtt_destroy(strtt_t *strtt);
 
-    int readRtt();
-    int readRttFromBuff(int buffIndex, std::vector<uint8_t> *buffer);
-    int writeRtt(int buffIndex, std::vector<uint8_t> *buffer);
+int strtt_open(strtt_t *strtt, bool use_tcp, uint16_t port_tcp);
+int strtt_close(strtt_t *strtt);
 
-    int getIdCode(uint32_t *idCode);
+int strtt_find_rtt(strtt_t *strtt, uint32_t ram_kbytes);
+int strtt_get_rtt_desc(strtt_t *strtt);
+int strtt_get_rtt_buff_size(strtt_t *strtt, uint32_t buff_index, uint32_t *size_read, uint32_t *size_write);
 
-    void addChannelHandler(CallbackFunction callback);
-};
+int strtt_read_rtt(strtt_t *strtt);
+int strtt_read_rtt_from_buff(strtt_t *strtt, int buff_index, buffer_t *buffer);
+int strtt_write_rtt(strtt_t *strtt, int buff_index, buffer_t *buffer);
 
+int strtt_get_id_code(strtt_t *strtt, uint32_t *id_code);
+
+void strtt_add_channel_handler(strtt_t *strtt, channel_callback_fn callback, void *user_data);
+
+#ifdef __cplusplus
+}
 #endif
+
+#endif // _PH_STRTT_C_H
