@@ -26,7 +26,7 @@
 #include "stlink_errors.h"
 
 #define RAM_START (0x20000000)
-#define SANE_SIZE_MAX (512 * 1e10)
+#define SANE_SIZE_MAX (256 * 1024) // 256KB
 
 #define SEGGER_RTT_MODE_NO_BLOCK_SKIP (0)      // Skip. Do not block, output nothing. (Default)
 #define SEGGER_RTT_MODE_NO_BLOCK_TRIM (1)      // Trim: Do not block, output as much as fits.
