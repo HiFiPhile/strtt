@@ -5,13 +5,15 @@ Options:
 
 **-v** debugLevel where debugLevel from -3 to 4 when -3 is equal to silent output
 
-**-ramstart** Ram Start address where the program is looking for RTT( **hex**,dec model supported).
+**-ramstart** RAM start address where the program is looking for RTT( **hex**,dec model supported).
 
-**-ramsize** ramAmmount where ramAmmount is the range where the program is looking for RTT.
+**-ramsize** RAM size in KB where the program is looking for RTT.
 
-**-tcp** use tcp connection to st-link gdb server (<https://www.st.com/en/development-tools/st-link-server.html>)
+**-tcp** Use tcp connection to st-link gdb server (<https://www.st.com/en/development-tools/st-link-server.html>)
 
-**-ap** select the AP number to use (default 0), some devices have multiple APs, for example STM32H5 and STM32H7 need set AP to 1.
+**-ap** Select the AP number to use (default 0), some devices have multiple APs, for example STM32H5 and STM32H7 need set AP to 1.
+
+**-loop** Keep trying to connect to the target until successful.
 
 # Windows
 

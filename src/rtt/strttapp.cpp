@@ -1,6 +1,7 @@
 #include <atomic>
 #include <vector>
 #include <chrono>
+#include <thread>
 #include <signal.h>
 
 #include "strtt.h"
@@ -27,68 +28,181 @@
 
 #endif
 
-// CONST //////////////////////////////////////////////////
+// CONSTANTS //////////////////////////////////////////////
 
-const int SYSVIEW_COMM_SERVER_PORT = 19111; // the port users will be connecting to
+const int SYSVIEW_COMM_SERVER_PORT = 19111;
+const int DEFAULT_RAM_SIZE_KB = 16;
+const uint32_t RAM_START_DEFAULT = RAM_START;
+const uint8_t DEFAULT_AP_NUM = 0;
+const int RTT_RETRY_DELAY_MS = 500;
+const int RTT_TERMINAL_CHANNEL = 0;
+const int RTT_SYSVIEW_CHANNEL = 1;
+
+#ifdef __linux__
+const int PROCESS_PRIORITY = -11;
+#endif
 
 // GLOBAL VARIABLES ///////////////////////////////////////
 
 std::atomic_bool stopApp;
 
-// DEFINES ////////////////////////////////////////////////
+// HELPER MACROS //////////////////////////////////////////
 
 #define START_TS auto __start_ts = std::chrono::high_resolution_clock::now()
-#define STOP_TS _duration = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - __start_ts).count()
+#define STOP_TS cycleDuration = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - __start_ts).count()
 
-//
-//
-//
+// SIGNAL HANDLER /////////////////////////////////////////
+
 void signalHandler(int signum)
 {
     LOG_INFO("Interrupt signal %d received", signum);
-
-    // cleanup and close up stuff here
-    // terminate program
     stopApp = true;
 }
 
-// INFO:
-// https://stackoverflow.com/questions/12207684/how-do-i-terminate-a-thread-in-c11
-// https://www.bo-yang.net/2017/11/19/cpp-kill-detached-thread
+// HELPER FUNCTIONS ///////////////////////////////////////
+
+int parseIntegerOption(const std::string& optionValue)
+{
+    if (optionValue.size() > 1 && optionValue[0] == '0' && (optionValue[1] == 'x' || optionValue[1] == 'X'))
+    {
+        return std::stoi(optionValue, nullptr, 16);
+    }
+    return std::stoi(optionValue, nullptr, 0);
+}
+
+bool findRttWithRetry(StRtt* strtt, int ramSizeKB, bool loopMode)
+{
+    bool rttFound = false;
+    do
+    {
+        int result = strtt->findRtt(ramSizeKB);
+        if (result == ERROR_OK)
+        {
+            rttFound = true;
+            LOG_INFO("RTT found successfully");
+        }
+        else
+        {
+            if (loopMode)
+            {
+                LOG_INFO("RTT not found, retrying...");
+                std::this_thread::sleep_for(std::chrono::milliseconds(RTT_RETRY_DELAY_MS));
+            }
+            else
+            {
+                LOG_ERROR("failed to find RTT (%d)", result);
+                exit(-1);
+            }
+        }
+    } while (!rttFound && loopMode && !stopApp);
+
+    if (!rttFound)
+    {
+        LOG_ERROR("RTT search cancelled");
+        exit(-1);
+    }
+
+    return rttFound;
+}
+
+void setupChannelHandlers(StRtt* strtt
+#ifdef SYSVIEW
+    , SysView* sysView
+#endif
+)
+{
+    strtt->addChannelHandler([&](const int index, const std::vector<uint8_t>* buffer)
+    {
+        if (index == RTT_TERMINAL_CHANNEL)
+        {
+            // TERMINAL, print to console
+            for (uint8_t ch : *buffer)
+            {
+                fputc(ch, stdout);
+            }
+            fflush(stdout);
+        }
+#ifdef SYSVIEW
+        else if (index == RTT_SYSVIEW_CHANNEL)
+        {
+            LOG_OUTPUT("SysView size: %d ", (int)buffer->size());
+            sysView->saveFromSTM(buffer);
+        }
+#endif
+    });
+}
+
+void handleRttReadError(StRtt* strtt, int ramSizeKB, bool loopMode, int errorCode)
+{
+    if (!loopMode)
+    {
+        LOG_ERROR("readRtt returned error %d, program is exiting", errorCode);
+        stopApp = true;
+        return;
+    }
+
+    LOG_INFO("readRtt failed (%d), attempting to re-find RTT...", errorCode);
+
+    bool rttFound = false;
+    do
+    {
+        int result = strtt->findRtt(ramSizeKB);
+        if (result == ERROR_OK)
+        {
+            rttFound = true;
+            LOG_INFO("RTT re-found successfully");
+            strtt->getRttDesc();
+        }
+        else
+        {
+            LOG_INFO("RTT not found, retrying...");
+            std::this_thread::sleep_for(std::chrono::milliseconds(RTT_RETRY_DELAY_MS));
+        }
+    } while (!rttFound && loopMode && !stopApp);
+
+    if (!rttFound)
+    {
+        LOG_ERROR("Failed to re-find RTT, exiting");
+        stopApp = true;
+    }
+}
+
+void processKeyboardInput(std::vector<uint8_t>& buffer)
+{
+    while (_kbhit())
+    {
+        uint8_t ch = _getch();
+        buffer.push_back(ch);
+    }
+}
+
+// MAIN APPLICATION ///////////////////////////////////////
+
 
 int main(int argc, char **argv)
 {
-
 #ifdef __linux__
     // Opportunistic call to renice us, so we can keep up under
     // higher load conditions. This may fail when run as non-root.
-    setpriority(PRIO_PROCESS, 0, -11);
+    setpriority(PRIO_PROCESS, 0, PROCESS_PRIORITY);
 #endif
 
     InputParser input(argc, argv);
-
     signal(SIGINT, signalHandler);
 
+    // Initialize logging
     log_init();
     debug_level = LOG_LVL_SILENT;
-
     if (input.cmdOptionExists("-v"))
     {
         debug_level = std::stoi(input.getCmdOption("-v"));
     }
 
-    int _ramKB = 16;
+    // Parse command line options
+    int ramSizeKB = DEFAULT_RAM_SIZE_KB;
     if (input.cmdOptionExists("-ramsize"))
     {
-        std::string opt = input.getCmdOption("-ramsize");
-        if(opt.size() > 1 && opt[0] == '0' && (opt[1] == 'x' || opt[1] == 'X'))
-        {
-            _ramKB = std::stoi(opt, nullptr, 16);
-        }
-        else
-        {
-            _ramKB = std::stoi(opt, nullptr, 0);
-        }
+        ramSizeKB = parseIntegerOption(input.getCmdOption("-ramsize"));
     }
 
     int port = SYSVIEW_COMM_SERVER_PORT;
@@ -97,135 +211,83 @@ int main(int argc, char **argv)
         port = std::stoi(input.getCmdOption("-port"));
     }
 
-    uint32_t _ramStart = RAM_START;
+    uint32_t ramStart = RAM_START_DEFAULT;
     if (input.cmdOptionExists("-ramstart"))
     {
-        // get ram start from options, value maybe hex or dec
-        std::string opt = input.getCmdOption("-ramstart");
-        if(opt.size() > 1 && opt[0] == '0' && (opt[1] == 'x' || opt[1] == 'X'))
-        {
-            _ramStart = std::stoi(opt, nullptr, 16);
-        }
-        else
-        {
-            _ramStart = std::stoi(opt, nullptr, 0);
-        }
+        ramStart = parseIntegerOption(input.getCmdOption("-ramstart"));
     }
 
-    bool showCycleTime = false;
-    if (input.cmdOptionExists("-t"))
-    {
-        showCycleTime = true;
-    }
+    bool showCycleTime = input.cmdOptionExists("-t");
+    bool useTCP = input.cmdOptionExists("-tcp");
+    bool loopMode = input.cmdOptionExists("-loop");
 
-    bool useTCP = false;
-    if (input.cmdOptionExists("-tcp"))
-    {
-        useTCP = true;
-    }
-
-    uint8_t apNum = 0;
+    uint8_t apNum = DEFAULT_AP_NUM;
     if (input.cmdOptionExists("-ap"))
     {
         apNum = std::stoi(input.getCmdOption("-ap"));
     }
 
-    StRtt *strtt = new StRtt(_ramStart, apNum);
+    StRtt *strtt = new StRtt(ramStart, apNum);
 
-    // open stLink
-    int res = strtt->open(useTCP);
-    if (res != ERROR_OK)
+    // Open ST-Link connection
+    int result = strtt->open(useTCP);
+    if (result != ERROR_OK)
     {
-        LOG_ERROR("failed to open STLINK (%d)", res);
+        LOG_ERROR("failed to open STLINK (%d)", result);
         exit(-1);
     }
 
-    // get idCode
-    // uint32_t idCode;
-    // res = strtt->getIdCode(&idCode);
-
-    // find rtt
-    res = strtt->findRtt(_ramKB);
-    if (res != ERROR_OK)
-    {
-        LOG_ERROR("failed to find RTT (%d)", res);
-        exit(-1);
-    }
-
-    // get channels description
+    // Find RTT control block
+    findRttWithRetry(strtt, ramSizeKB, loopMode);
     strtt->getRttDesc();
 
-    // get buff size
-    uint32_t sizeR, sizeW;
-    res = strtt->getRttBuffSize(0, &sizeR, &sizeW);
+    // Get buffer sizes
+    uint32_t sizeRead, sizeWrite;
+    result = strtt->getRttBuffSize(RTT_TERMINAL_CHANNEL, &sizeRead, &sizeWrite);
 
 #ifdef SYSVIEW
-    SysView *_sv;
-    _sv = new SysView(port);
+    SysView* sysView = new SysView(port);
+    setupChannelHandlers(strtt, sysView);
+#else
+    setupChannelHandlers(strtt);
 #endif
 
-    strtt->addChannelHandler([&](const int index, const std::vector<uint8_t> *buffer)
-                             {
-                                 if (index == 0)
-                                 {
-                                     // TERMINAL, print to console
-                                     for (uint8_t ch : *buffer)
-                                     {
-                                         fputc(ch, stdout);
-                                     }
-                                     fflush(stdout);
-                                 }
+    // Main processing loop
+    std::vector<uint8_t> inputBuffer;
+    double cycleDuration;
 
-#ifdef SYSVIEW
-                                 else if (index == 1)
-                                 {
-                                     LOG_OUTPUT("SysView size: %d ", (int)buffer->size());
-                                     _sv->saveFromSTM(buffer);
-                                 }
-#endif
-                             });
-
-    std::vector<uint8_t> str;
-    double _duration;
     while (!stopApp)
     {
         START_TS;
 
-        // read rtt
-        res = strtt->readRtt();
-
-        if (res != ERROR_OK)
+        // Read RTT data from target
+        result = strtt->readRtt();
+        if (result != ERROR_OK)
         {
-            LOG_ERROR("readRtt returned error %d, program is exiting", res);
-            stopApp = true;
+            handleRttReadError(strtt, ramSizeKB, loopMode, result);
+            continue;
         }
 
-        // read console
-        while (_kbhit())
+        // Process keyboard input
+        processKeyboardInput(inputBuffer);
+        if (inputBuffer.size() > 0)
         {
-            uint8_t ch = _getch();
-            str.push_back(ch);
-        }
-
-        // write rtt
-        if (str.size() > 0)
-        {
-            strtt->writeRtt(0, &str);
+            strtt->writeRtt(RTT_TERMINAL_CHANNEL, &inputBuffer);
         }
 
 #ifdef SYSVIEW
-        // write SysView
-        if (_sv->dataToSTM())
+        // Process SysView data
+        if (sysView->dataToSTM())
         {
-            auto data = _sv->getDataToSTM();
-            strtt->writeRtt(1, &data);
+            auto data = sysView->getDataToSTM();
+            strtt->writeRtt(RTT_SYSVIEW_CHANNEL, &data);
         }
 #endif
 
         if (showCycleTime)
         {
             STOP_TS;
-            LOG_USER("Cycle time: %dms", (int)_duration);
+            LOG_USER("Cycle time: %dms", (int)cycleDuration);
         }
     }
 
