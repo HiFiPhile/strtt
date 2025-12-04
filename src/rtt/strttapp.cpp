@@ -192,7 +192,7 @@ int main(int argc, char **argv)
 
     // Initialize logging
     log_init();
-    debug_level = LOG_LVL_SILENT;
+    debug_level = LOG_LVL_ERROR;
     if (input.cmdOptionExists("-v"))
     {
         debug_level = std::stoi(input.getCmdOption("-v"));
