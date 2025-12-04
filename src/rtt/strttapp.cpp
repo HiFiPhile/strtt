@@ -8,12 +8,6 @@
 #include "log.h"
 #include "inputparser.h"
 
-// #define SYSVIEW
-
-#ifdef SYSVIEW
-#include "sysview.h"
-#endif
-
 #ifdef __linux__
 
 #include <sys/resource.h>
@@ -30,13 +24,11 @@
 
 // CONSTANTS //////////////////////////////////////////////
 
-const int SYSVIEW_COMM_SERVER_PORT = 19111;
 const int DEFAULT_RAM_SIZE_KB = 16;
 const uint32_t RAM_START_DEFAULT = RAM_START;
 const uint8_t DEFAULT_AP_NUM = 0;
 const int RTT_RETRY_DELAY_MS = 500;
 const int RTT_TERMINAL_CHANNEL = 0;
-const int RTT_SYSVIEW_CHANNEL = 1;
 
 #ifdef __linux__
 const int PROCESS_PRIORITY = -11;
@@ -105,11 +97,7 @@ bool findRttWithRetry(StRtt* strtt, int ramSizeKB, bool loopMode)
     return rttFound;
 }
 
-void setupChannelHandlers(StRtt* strtt
-#ifdef SYSVIEW
-    , SysView* sysView
-#endif
-)
+void setupChannelHandlers(StRtt* strtt)
 {
     strtt->addChannelHandler([&](const int index, const std::vector<uint8_t>* buffer)
     {
@@ -122,13 +110,6 @@ void setupChannelHandlers(StRtt* strtt
             }
             fflush(stdout);
         }
-#ifdef SYSVIEW
-        else if (index == RTT_SYSVIEW_CHANNEL)
-        {
-            LOG_OUTPUT("SysView size: %d ", (int)buffer->size());
-            sysView->saveFromSTM(buffer);
-        }
-#endif
     });
 }
 
@@ -205,12 +186,6 @@ int main(int argc, char **argv)
         ramSizeKB = parseIntegerOption(input.getCmdOption("-ramsize"));
     }
 
-    int port = SYSVIEW_COMM_SERVER_PORT;
-    if (input.cmdOptionExists("-port"))
-    {
-        port = std::stoi(input.getCmdOption("-port"));
-    }
-
     uint32_t ramStart = RAM_START_DEFAULT;
     if (input.cmdOptionExists("-ramstart"))
     {
@@ -245,12 +220,7 @@ int main(int argc, char **argv)
     uint32_t sizeRead, sizeWrite;
     result = strtt->getRttBuffSize(RTT_TERMINAL_CHANNEL, &sizeRead, &sizeWrite);
 
-#ifdef SYSVIEW
-    SysView* sysView = new SysView(port);
-    setupChannelHandlers(strtt, sysView);
-#else
     setupChannelHandlers(strtt);
-#endif
 
     // Main processing loop
     std::vector<uint8_t> inputBuffer;
@@ -274,15 +244,6 @@ int main(int argc, char **argv)
         {
             strtt->writeRtt(RTT_TERMINAL_CHANNEL, &inputBuffer);
         }
-
-#ifdef SYSVIEW
-        // Process SysView data
-        if (sysView->dataToSTM())
-        {
-            auto data = sysView->getDataToSTM();
-            strtt->writeRtt(RTT_SYSVIEW_CHANNEL, &data);
-        }
-#endif
 
         if (showCycleTime)
         {

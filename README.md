@@ -45,12 +45,6 @@ Program is using a refactored driver from the openocd project.
 
 ```
 
-# SYSTEMVIEW
-
-One experimental option is to use this program with Segger SystemView using tcp connection. To use it, the program must be built with the SYSVIEW option.
-
-`cmake -DSYSVIEW=1 ..`
-
 # RTT in browser
 You can also try to use web browser version:
 
